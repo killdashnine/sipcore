@@ -12,6 +12,7 @@ use core::str;
 pub enum RequestUriScheme {
     SIP,
     SIPS,
+    TEL,
 }
 
 impl RequestUriScheme {
@@ -19,6 +20,7 @@ impl RequestUriScheme {
         match s {
             b"sip" => Ok(Self::SIP),
             b"sips" => Ok(Self::SIPS),
+            b"tel" => Ok(Self::TEL),
             _ => sip_parse_error!(101, "Can't parse sipuri scheme"),
         }
     }
@@ -101,6 +103,7 @@ impl<'a> SipUriHeader<'a> {
 // uri-parameters [ headers ]
 // SIPS-URI         =  "sips:" [ userinfo ] hostport
 // uri-parameters [ headers ]
+// TEL-URI          =  "tel:" [ telephone-subscriber ]
 // userinfo         =  ( user / telephone-subscriber ) [ ":" password ] "@"
 // hostport         =  host [ ":" port ]
 /// Its general form, in the case of a SIP URI, is: sip:user:password@host:port;uri-parameters?headers
@@ -169,8 +172,12 @@ impl<'a> SipUri<'a> {
         let (input_after_scheme, _) = take(1usize)(input)?; // skip ':'
         let scheme = RequestUriScheme::from_bytes(uri_scheme)?;
 
-        let (right_with_ampersat, before_ampersat) =
-            take_till(|c| c == b'@' || c == b'\n' || c == b',')(input_after_scheme)?;
+        let (right_with_ampersat, before_ampersat) = if scheme == RequestUriScheme::TEL {
+            take_till(|c|  c == b'\n')(input_after_scheme)?
+        } else {
+            take_till(|c| c == b'@' || c == b'\n' || c == b',')(input_after_scheme)?
+        };
+
         let is_user_info_present = right_with_ampersat.is_empty()
             || right_with_ampersat[0] == b'\n'
             || right_with_ampersat[0] == b',';
@@ -189,6 +196,10 @@ impl<'a> SipUri<'a> {
         };
 
         let (input, hostport) = HostPort::parse(input)?;
+
+        if scheme == RequestUriScheme::TEL {
+            UserInfo::from_bytes_tel_uri(input_after_scheme)?;
+        }
 
         if !parse_with_parameters {
             let (input, headers) = if input.is_empty() {
@@ -296,6 +307,11 @@ mod tests {
         assert_eq!(sip_uri.scheme, RequestUriScheme::SIPS);
         assert_eq!(sip_uri.user_info().unwrap().value, "1212");
         assert_eq!(sip_uri.hostport.host, "gateway.com");
+
+        let (rest, sip_uri) = SipUri::parse_ext("tel:0015555;phone-context=ims.mnc090.mcc208.3gppnetwork.org SIP/2.0".as_bytes(), true).unwrap();
+        assert_eq!(rest.len(), 7);
+        assert_eq!(sip_uri.scheme, RequestUriScheme::TEL);
+        assert_eq!(sip_uri.user_info.unwrap().value, "0015555");
 
         let (rest, sip_uri) =
             SipUri::parse_ext("sip:alice@192.0.2.4:8888".as_bytes(), true).unwrap();

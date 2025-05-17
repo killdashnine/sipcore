@@ -1,3 +1,5 @@
+use nom::bytes::complete::take_till;
+
 use crate::common::{
     bnfcore::*,
     errorparse::SipParseError,
@@ -58,6 +60,24 @@ impl<'a> UserInfo<'a> {
                 password: Some(pswd_str),
             });
         }
+    }
+
+    pub fn from_bytes_tel_uri(input: &'a [u8]) -> Result<UserInfo, nom::Err<SipParseError>> {
+        if input.len() <= 1 {
+            return sip_parse_error!(1);
+        }
+
+        if !is_userinfo_char(input[0]) {
+            return sip_parse_error!(2);
+        }
+
+        let (_, user) = take_till(|c|  c == b'\n')(input)?;
+
+        let (_, user_str) = from_utf8_nom(user)?;
+        return Ok(UserInfo {
+            value: user_str,
+            password: None,
+        });
     }
 }
 
